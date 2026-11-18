@@ -1,0 +1,9 @@
+# Limita el crecimiento de la base de datos de alertas de CrowdSec (SQLite)
+# para que no coma disco en un servidor pequeño.
+db_config:
+  log_level: info
+  type: sqlite3
+  db_path: /var/lib/crowdsec/data/crowdsec.db
+  flush:
+    max_items: 5000
+    max_age: 7d

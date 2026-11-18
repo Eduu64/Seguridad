@@ -1,0 +1,47 @@
+# ── Caddyfile del homelab ─────────────────────────────────────────────────────
+# Caddy delante de tus contenedores: HTTPS automático (CA interna para .home.arpa)
+# y log de accesos en JSON, que es lo que lee CrowdSec para detectar ataques web.
+
+# API de administración de Caddy solo en local del contenedor
+{
+	admin 127.0.0.1:2019
+}
+
+# Sitio de prueba: entra a http://IP-DEL-SERVIDOR/ y debe responder esto
+:80 {
+	log
+	respond "Caddy funcionando — edita caddy/Caddyfile para publicar tus servicios"
+}
+
+# ── Ejemplos para tus servicios (descomenta y ajusta) ────────────────────────
+#
+# OPCIÓN A — el contenedor está en la red caddy-net (recomendado):
+#   docker network connect caddy-net NOMBRE_CONTENEDOR
+#
+# portainer.home.arpa {
+#	log
+#	reverse_proxy portainer:9000
+# }
+#
+# nextcloud.home.arpa {
+#	log
+#	reverse_proxy nextcloud:80
+# }
+#
+# OPCIÓN B — apuntar directo a IP:puerto del contenedor en tu LAN:
+#
+# jellyfin.home.arpa {
+#	log
+#	reverse_proxy 192.168.1.50:8096
+# }
+#
+# IMPORTANTE: deja la directiva "log" en cada sitio que publiques;
+# sin ella CrowdSec no puede analizar el tráfico de ese servicio.
+#
+# Los dominios .home.arpa usan certificado interno de Caddy (autofirmado):
+# tu navegador mostrará aviso la primera vez, es normal en LAN.
+#
+# Nota de aislamiento: con .home.arpa Caddy NO contacta con ninguna autoridad
+# de certificados (usa su CA interna). Solo pediría certificados a Let's Encrypt
+# si publicaras un dominio público real; si eso pasa y quieres evitarlo, añade
+# la directiva `tls internal` a ese sitio.

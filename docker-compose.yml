@@ -1,0 +1,162 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Seguridad para homelab Debian con Docker — CrowdSec (IPS) + Caddy (proxy)
+#
+# Imágenes FIJADAS a versiones oficiales verificadas en Docker Hub (2026-11-18):
+#   crowdsecurity/crowdsec:v1.8.2 · caddy:2.11.9-alpine · python:3.13.18-alpine.
+#   Para actualizarlas, sube la tag a mano (ver README §8) — nada se mueve solo.
+#
+# El bouncer de firewall NO es un contenedor: CrowdSec no publica imagen oficial
+# de firewall-bouncer (verificado en Docker Hub, 2026-11-18) y debe tocar el
+# netfilter del host, así que setup.sh lo instala NATIVO desde el repo oficial
+# de paquetes (systemd). Es el único componente fuera de Docker, por necesidad.
+#
+# Arranque base:      ./setup.sh && docker compose up -d
+# Panel web local:    http://IP-DEL-SERVIDOR:8096   (sin login por defecto,
+#                     solo lectura; escrituras opcionales con PANEL_UI_PASSWORD — README §6)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ══ IPS: detección de ataques y baneo de IPs ══════════════════════════════
+  # Lee los logs del host (SSH) y de tus contenedores (vía docker.sock),
+  # y ordena al bouncer que bloquee las IPs atacantes en el firewall del host.
+  crowdsec:
+    image: crowdsecurity/crowdsec:v1.8.2
+    container_name: crowdsec
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    depends_on: []   # sin dependencias, es el núcleo
+    environment:
+      # Colecciones de detección. base = linux + sshd; caddy = parser de tu proxy;
+      # http-cve = exploits web conocidos. Añade más según tus contenedores (ver README §7).
+      COLLECTIONS: "crowdsecurity/linux crowdsecurity/caddy crowdsecurity/http-cve"
+      # Registra el bouncer automáticamente con esta clave (se genera en setup.sh)
+      BOUNCER_KEY_firewall_bouncer: ${CROWDSEC_BOUNCER_KEY}
+      GID: "${GID}"          # GID del grupo docker en el host (setup.sh lo detecta)
+      TZ: "${TZ}"
+    volumes:
+      # Configuración y base de datos persistentes
+      - crowdsec-config:/etc/crowdsec
+      - crowdsec-db:/var/lib/crowdsec/data
+      # Ficheros de adquisición de logs (uno por fuente)
+      - ./crowdsec/acquis.d:/etc/crowdsec/acquis.d:ro
+      # Whitelist de tu LAN para no bannear a tus propios dispositivos
+      - ./crowdsec/local-whitelists.yaml:/etc/crowdsec/parsers/s02-enrich/local-whitelists.yaml:ro
+      # Límite de crecimiento de la BD de alertas (poco disco)
+      - ./crowdsec/db_config.yaml:/etc/crowdsec/db_config.yaml:ro
+      # Socket de Docker (solo lectura de logs de contenedores; ver README §10)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Log de SSH del host (requiere rsyslog; ver README §12 si no existe)
+      - /var/log/auth.log:/var/log/auth.log:ro
+    ports:
+      # API local (LAPI) solo en loopback: la usa el bouncer, nada externo
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "cscli", "lapi", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  # ══ Bouncer de firewall: NATIVO en el host, no es un contenedor ════════════
+  # CrowdSec NO publica imagen Docker oficial del firewall-bouncer (comprobado
+  # en Docker Hub 2026-11-18) y su función — escribir iptables/ipset del kernel
+  # — exige correr en el host. `setup.sh` lo instala desde el repo oficial de
+  # paquetes (packages.crowdsec.net) como servicio systemd, con la misma clave
+  # que genera para la LAPI. Ver README §4 y §10.
+
+  # ══ Proxy inverso: Caddy (el más ligero: ~50 MB RAM, HTTPS automático) ════
+  # Delante de tus contenedores, accesible solo desde tu LAN.
+  # La directiva "log" de cada sitio genera el JSON de accesos que CrowdSec analiza.
+  caddy:
+    image: caddy:2.11.9-alpine
+    container_name: caddy
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      TZ: "${TZ}"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data        # certificados
+      - caddy-config:/config
+    networks:
+      - caddy-net
+
+  # ══ Panel web local: dashboard completo de CrowdSec (solo LAN) ════════════
+  # Se abre en: http://IP-DEL-SERVIDOR:8096 (puerto configurable con PANEL_PORT en .env)
+  # SIN LOGIN por defecto: cualquiera de tu LAN puede VER (alertas, mapa, stats),
+  # pero ninguna escritura pasa sin PANEL_UI_PASSWORD en .env. Notificaciones:
+  # campana local + webhook opcional (Discord/ntfy/Gotify, solo si TÚ configuras
+  # la URL). Ver README §6.
+  panel-setup:
+    image: crowdsecurity/crowdsec:v1.8.2
+    container_name: panel-setup
+    restart: "no"
+    depends_on:
+      crowdsec:
+        condition: service_healthy
+    entrypoint:
+      - cscli
+      - machines
+      - add
+      - panel
+      - --url
+      - http://crowdsec:8080
+      - --password
+      - ${PANEL_WATCHER_PASSWORD}
+      - --force
+      - -f
+      - /dev/null
+
+  panel:
+    image: python:3.13.18-alpine
+    container_name: panel
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      crowdsec:
+        condition: service_healthy
+    environment:
+      PANEL_LAPI_URL: http://crowdsec:8080
+      PANEL_USER: panel
+      PANEL_PASS: ${PANEL_WATCHER_PASSWORD}
+      PANEL_PORT: "8096"
+      # SIN contraseña = panel de SOLO LECTURA y sin login. Defínela en .env solo
+      # si quieres poder banear/desbanear/borrar desde el panel (con login).
+      PANEL_UI_PASSWORD: ${PANEL_UI_PASSWORD:-}
+      # Allowlist en SOLO LECTURA para la vista Allowlists y el aviso al banear
+      PANEL_WHITELIST_FILE: /wc/parsers/s02-enrich/local-whitelists.yaml
+      # (Opcional) destino de notificaciones: webhook de Discord o ntfy/Gotify.
+      # Vacío = nada sale de tu red. Ver README §6.
+      NOTIFY_URL: ${DISCORD_WEBHOOK_URL:-}
+    ports:
+      - "${PANEL_PORT:-8096}:8096"
+    volumes:
+      - ./panel:/srv:ro
+      - panel-data:/data                    # SQLite local: histórico, notificaciones, auditoría
+      - crowdsec-config:/wc:ro              # solo lectura: parsea la allowlist para la vista
+    command: python -u /srv/panel.py
+
+# ── Volúmenes persistentes ────────────────────────────────────────────────────
+volumes:
+  crowdsec-config:
+  crowdsec-db:
+  caddy-data:
+  caddy-config:
+  panel-data:
+
+# ── Redes ─────────────────────────────────────────────────────────────────────
+networks:
+  # Red para que Caddy alcance tus contenedores:
+  #   docker network connect caddy-net NOMBRE_CONTENEDOR
+  # y luego en el Caddyfile: reverse_proxy NOMBRE_CONTENEDOR:PUERTO
+  caddy-net:
+    name: caddy-net

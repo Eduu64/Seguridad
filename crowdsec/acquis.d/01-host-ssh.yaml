@@ -1,0 +1,7 @@
+# Log de SSH del host (autenticaciones, intentos de entrada)
+# Si tu Debian no genera /var/log/auth.log, instala rsyslog:
+#   sudo apt install rsyslog
+filenames:
+  - /var/log/auth.log
+labels:
+  type: syslog

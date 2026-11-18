@@ -1,0 +1,7 @@
+# Logs de acceso de Caddy (ataques web contra tus servicios publicados)
+# El contenedor se llama "caddy" en docker-compose.yml.
+source: docker
+container_name_regexp:
+  - "^caddy$"
+labels:
+  type: caddy

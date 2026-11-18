@@ -1,0 +1,12 @@
+# Whitelist local: NO bannear IPs de redes privadas.
+# Evita que un falso positivo deje fuera a tu familia o a tus propios contenedores
+# (el tráfico interno de Docker usa rangos 172.16.0.0/12).
+# Si prefieres máxima severidad y sabes lo que haces, borra este fichero y reinicia.
+name: local/lan-whitelist
+description: "Redes privadas de casa: nunca banear"
+whitelist:
+  reason: "red local"
+  ip:
+    - "192.168.0.0/16"
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"

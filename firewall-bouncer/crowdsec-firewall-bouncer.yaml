@@ -1,0 +1,9 @@
+# Configuración del bouncer de firewall NATIVO del host (paquete oficial .deb;
+# CrowdSec no publica imagen Docker de este bouncer). setup.sh sustituye la
+# clave y copia este fichero a /etc/crowdsec/bouncers/ en el host.
+mode: ipset
+update_frequency: 10s
+api_url: http://127.0.0.1:8080/
+api_key: __BOUNCER_KEY__
+log_level: info
+deny_log: false
